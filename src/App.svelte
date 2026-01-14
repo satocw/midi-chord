@@ -80,6 +80,7 @@
   let selectedMidiId = '';
   let listening = false;
   let midiNotes = [];
+  let originalMidiNotes = [];
   let midiChord = '';
   let midiRole = '';
   let midiInputObj = null;
@@ -102,6 +103,18 @@
     }
   }
 
+  function normalizeToPianoRange(notes) {
+    // 60～83の範囲にオクターブシフト
+    return notes.map(n => {
+      let note = n;
+      while (note < 60) note += 12;
+      while (note > 83) note -= 12;
+      // もし範囲外（極端な場合）なら除外
+      if (note < 60 || note > 83) return null;
+      return note;
+    }).filter(n => n !== null);
+  }
+
   function handleMIDIMessage(ev) {
     const data = ev.data;
     const status = data[0] & 0xf0;
@@ -109,35 +122,53 @@
     const vel = data[2];
     if (status === 0x90 && vel > 0) {
       if (!midiNotes.includes(note)) midiNotes = [...midiNotes, note].sort((a,b)=>a-b);
+      // 元のノート配列も更新
+      if (!originalMidiNotes.includes(note)) originalMidiNotes = [...originalMidiNotes, note].sort((a,b)=>a-b);
       updateMidiChord();
       if (syncPianoMidi) {
-        const withinRange = midiNotes.filter(n => n >= 60 && n <= 83);
-        pianoNotes = withinRange;
+        const normalized = normalizeToPianoRange(midiNotes);
+        pianoNotes = normalized;
         // ピアノ側の判定も更新
-        const result = detectChord(pianoNotes, isFlatKey(selectedKey, isMinor));
-        pianoChord = result ? result : '判定できません';
-        if (result) {
-          let rootName = result.split(/メジャー|マイナー|7|sus|dim|aug/)[0].split('/')[0];
-          pianoRole = getChordRole(selectedKey, rootName, isMinor) || '';
-        } else {
-          pianoRole = '';
-        }
+        updatePianoChordWithBass();
       }
     } else if (status === 0x80 || (status === 0x90 && vel === 0)) {
       midiNotes = midiNotes.filter(n => n !== note);
+      // 元のノート配列も更新
+      originalMidiNotes = originalMidiNotes.filter(n => n !== note);
       updateMidiChord();
       if (syncPianoMidi) {
-        const withinRange = midiNotes.filter(n => n >= 60 && n <= 83);
-        pianoNotes = withinRange;
-        const result = detectChord(pianoNotes, isFlatKey(selectedKey, isMinor));
-        pianoChord = result ? result : '判定できません';
-        if (result) {
-          let rootName = result.split(/メジャー|マイナー|7|sus|dim|aug/)[0].split('/')[0];
-          pianoRole = getChordRole(selectedKey, rootName, isMinor) || '';
-        } else {
-          pianoRole = '';
-        }
+        const normalized = normalizeToPianoRange(midiNotes);
+        pianoNotes = normalized;
+        updatePianoChordWithBass();
       }
+    }
+  }
+
+  function updatePianoChordWithBass() {
+    // 最低音のピッチクラスを取得
+    if (originalMidiNotes.length === 0) {
+      pianoChord = '';
+      pianoRole = '';
+      return;
+    }
+    const bassNote = Math.min(...originalMidiNotes);
+    const bassClass = bassNote % 12;
+    // コード判定
+    const result = detectChord(pianoNotes, isFlatKey(selectedKey, isMinor));
+    pianoChord = result ? result : '判定できません';
+    if (result) {
+      // ルート名抽出
+      let rootName = result.split(/メジャー|マイナー|7|sus|dim|aug/)[0];
+      rootName = rootName.split('/')[0];
+      // ベース音名を付加（スラッシュコード）
+      const NOTE_NAMES_SHARP = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      const bassName = NOTE_NAMES_SHARP[bassClass];
+      if (!result.includes('/')) {
+        pianoChord += `/${bassName}`;
+      }
+      pianoRole = getChordRole(selectedKey, rootName, isMinor) || '';
+    } else {
+      pianoRole = '';
     }
   }
 
@@ -157,6 +188,7 @@
     }
     listening = false;
     midiNotes = [];
+    originalMidiNotes = [];
     updateMidiChord();
   }
 
