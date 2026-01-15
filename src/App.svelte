@@ -32,6 +32,19 @@
   }
   import { detectChord } from './lib/chordDetector'
   import Piano from './lib/Piano.svelte'
+  import { playNotes, stopAll } from './lib/simpleSynth'
+  let isPlaying = $state(false);
+
+  function handlePlay() {
+    if (notes.length === 0) return;
+    playNotes(notes);
+    isPlaying = true;
+  }
+
+  function handleStop() {
+    stopAll();
+    isPlaying = false;
+  }
 
   // ノート入力の同期用
   let notes = $state([]);
@@ -142,6 +155,10 @@
       <div class="result-highlight">
         {chordResult} {chordRole ? `（${chordRole}）` : '　'}
       </div>
+      <div style="display:flex; justify-content:center; gap:12px; margin:12px 0;">
+        <button onclick={handlePlay} disabled={isPlaying || notes.length === 0} style="font-size:1.1em;">▶️和音を鳴らす</button>
+        <button onclick={handleStop} disabled={!isPlaying} style="font-size:1.1em;">⏹止める</button>
+      </div>
       <p style="text-align:center; color:#888; margin-top:8px;">現在押下ノート: {notes.join(', ')}</p>
     </div>
 
@@ -177,6 +194,10 @@
 
 <style>
   .result-highlight {
+      button[disabled] {
+        opacity: 0.5;
+        pointer-events: none;
+      }
     margin: 20px auto 12px auto;
     padding: 18px 28px;
     font-size: 1.5rem;
