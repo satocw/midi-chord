@@ -28,7 +28,12 @@ export function detectChord(notes: number[], useFlat = false): string | null {
     const relNotes = notes.map(n => (n - root + 12) % 12);
     for (const pattern of CHORD_PATTERNS) {
       // パターンのintervalsが全て含まれているか
-      if (pattern.intervals.every(i => relNotes.includes(i))) {
+      // かつ、余計な音が含まれていないか（relNotesとpattern.intervalsが同じ集合）
+      const intervalsSet = new Set(pattern.intervals);
+      const relNotesSet = new Set(relNotes);
+      const allIncluded = pattern.intervals.every(i => relNotesSet.has(i));
+      const noExtra = relNotes.every(i => intervalsSet.has(i));
+      if (allIncluded && noExtra) {
         const rootName = NOTE_NAMES[root % 12];
         const bassName = NOTE_NAMES[bassNote % 12];
         // 転回形の場合はスラッシュ表記

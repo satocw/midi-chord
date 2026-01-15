@@ -6,9 +6,9 @@
     'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#',
     'F', 'Bb', 'Eb', 'Ab', 'Db', 'Gb', 'Cb'
   ];
-  let selectedKey = 'C';
+  let selectedKey = $state('C');
   // 調性（長調/短調）
-  let isMinor = false;
+  let isMinor = $state(false);
 
   // ノート名→インデックス変換（C=0...B=11）
   const NOTE_INDEX = {
@@ -33,58 +33,23 @@
   import { detectChord } from './lib/chordDetector'
   import Piano from './lib/Piano.svelte'
 
-  let pianoNotes = [];
-  let pianoChord = '';
-  let pianoRole = '';
-  function handlePianoChange(notes) {
-    pianoNotes = notes;
-    const result = detectChord(notes, isFlatKey(selectedKey, isMinor));
-    pianoChord = result ? result : '判定できません';
-    // 和音のルート名抽出（例: Cメジャー/E → C）
-    let rootName = '';
-    if (result) {
-      rootName = result.split(/メジャー|マイナー|7|sus|dim|aug/)[0];
-      rootName = rootName.split('/')[0];
-      pianoRole = getChordRole(selectedKey, rootName, isMinor) || '';
-    } else {
-      pianoRole = '';
-    }
-    if (syncPianoMidi) {
-      midiNotes = [...notes];
-      updateMidiChord();
-    }
-  }
-  let inputNotes = '';
-  let chordResult = '';
-  let chordRole = '';
+  // ノート入力の同期用
+  let notes = $state([]);
+  let chordResult = $state('');
+  let chordRole = $state('');
 
-  function handleDetect() {
-    // 入力例: "60,64,67"
-    const notes = inputNotes.split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n));
-    const result = detectChord(notes, isFlatKey(selectedKey, isMinor));
-    chordResult = result ? result : '判定できません';
-    let rootName = '';
-    if (result) {
-      rootName = result.split(/メジャー|マイナー|7|sus|dim|aug/)[0];
-      rootName = rootName.split('/')[0];
-      chordRole = getChordRole(selectedKey, rootName, isMinor) || '';
-    } else {
-      chordRole = '';
-    }
+  function handlePianoChange(newNotes) {
+    notes = [...newNotes];
+    updateChordStates();
   }
 
   // ---- MIDI入力（Web MIDI API） ----
   let midiSupported = typeof navigator !== 'undefined' && 'requestMIDIAccess' in navigator;
   let midiAccess = null;
-  let midiInputs = [];
-  let selectedMidiId = '';
-  let listening = false;
-  let midiNotes = [];
-  let originalMidiNotes = [];
-  let midiChord = '';
-  let midiRole = '';
+  let midiInputs = $state([]);
+  let selectedMidiId = $state('');
+  let listening = $state(false);
   let midiInputObj = null;
-  let syncPianoMidi = false;
 
   function refreshMidiInputs() {
     if (!midiAccess) return;
@@ -92,28 +57,6 @@
     if (midiInputs.length && !selectedMidiId) selectedMidiId = midiInputs[0].id;
   }
 
-  function updateMidiChord() {
-    const result = detectChord(midiNotes, isFlatKey(selectedKey, isMinor));
-    midiChord = result ? result : '判定できません';
-    if (result) {
-      let rootName = result.split(/メジャー|マイナー|7|sus|dim|aug/)[0].split('/')[0];
-      midiRole = getChordRole(selectedKey, rootName, isMinor) || '';
-    } else {
-      midiRole = '';
-    }
-  }
-
-  function normalizeToPianoRange(notes) {
-    // 60～83の範囲にオクターブシフト
-    return notes.map(n => {
-      let note = n;
-      while (note < 60) note += 12;
-      while (note > 83) note -= 12;
-      // もし範囲外（極端な場合）なら除外
-      if (note < 60 || note > 83) return null;
-      return note;
-    }).filter(n => n !== null);
-  }
 
   function handleMIDIMessage(ev) {
     const data = ev.data;
@@ -121,56 +64,26 @@
     const note = data[1];
     const vel = data[2];
     if (status === 0x90 && vel > 0) {
-      if (!midiNotes.includes(note)) midiNotes = [...midiNotes, note].sort((a,b)=>a-b);
-      // 元のノート配列も更新
-      if (!originalMidiNotes.includes(note)) originalMidiNotes = [...originalMidiNotes, note].sort((a,b)=>a-b);
-      updateMidiChord();
-      if (syncPianoMidi) {
-        const normalized = normalizeToPianoRange(midiNotes);
-        pianoNotes = normalized;
-        // ピアノ側の判定も更新
-        updatePianoChordWithBass();
-      }
+      if (!notes.includes(note)) notes = [...notes, note].sort((a,b)=>a-b);
+      updateChordStates();
     } else if (status === 0x80 || (status === 0x90 && vel === 0)) {
-      midiNotes = midiNotes.filter(n => n !== note);
-      // 元のノート配列も更新
-      originalMidiNotes = originalMidiNotes.filter(n => n !== note);
-      updateMidiChord();
-      if (syncPianoMidi) {
-        const normalized = normalizeToPianoRange(midiNotes);
-        pianoNotes = normalized;
-        updatePianoChordWithBass();
-      }
+      notes = notes.filter(n => n !== note);
+      updateChordStates();
     }
   }
 
-  function updatePianoChordWithBass() {
-    // 最低音のピッチクラスを取得
-    if (originalMidiNotes.length === 0) {
-      pianoChord = '';
-      pianoRole = '';
-      return;
-    }
-    const bassNote = Math.min(...originalMidiNotes);
-    const bassClass = bassNote % 12;
-    // コード判定
-    const result = detectChord(pianoNotes, isFlatKey(selectedKey, isMinor));
-    pianoChord = result ? result : '判定できません';
+  function updateChordStates() {
+    // すべてのUIで同じ結果を表示
+    const result = detectChord(notes, isFlatKey(selectedKey, isMinor));
+    chordResult = result ? result : '判定できません';
     if (result) {
-      // ルート名抽出
-      let rootName = result.split(/メジャー|マイナー|7|sus|dim|aug/)[0];
-      rootName = rootName.split('/')[0];
-      // ベース音名を付加（スラッシュコード）
-      const NOTE_NAMES_SHARP = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-      const bassName = NOTE_NAMES_SHARP[bassClass];
-      if (!result.includes('/')) {
-        pianoChord += `/${bassName}`;
-      }
-      pianoRole = getChordRole(selectedKey, rootName, isMinor) || '';
+      let rootName = result.split(/メジャー|マイナー|7|sus|dim|aug/)[0].split('/')[0];
+      chordRole = getChordRole(selectedKey, rootName, isMinor) || '';
     } else {
-      pianoRole = '';
+      chordRole = '';
     }
   }
+
 
   function startListening() {
     if (!midiAccess || !selectedMidiId || listening) return;
@@ -187,9 +100,8 @@
       midiInputObj = null;
     }
     listening = false;
-    midiNotes = [];
-    originalMidiNotes = [];
-    updateMidiChord();
+    notes = [];
+    updateChordStates();
   }
 
   onMount(async () => {
@@ -220,23 +132,22 @@
       <label style="margin-left: 8px;">
         <input type="checkbox" bind:checked={isMinor} /> 短調（マイナー）
       </label>
-      <small>キーと調性に応じて#表記/b表記が切り替わります</small>
+      <p>
+        <small>キーと調性に応じて#表記/b表記が切り替わります</small>
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>判定結果</h2>
+      <div class="result-highlight">
+        {chordResult} {chordRole ? `（${chordRole}）` : '　'}
+      </div>
+      <p style="text-align:center; color:#888; margin-top:8px;">現在押下ノート: {notes.join(', ')}</p>
     </div>
 
   <div class="card">
-    <h2>和音判定テスト</h2>
-    <input type="text" bind:value={inputNotes} placeholder="ノート番号例: 60,64,67" />
-    <button on:click={handleDetect}>判定</button>
-    <p>結果: {chordResult} {chordRole ? `（${chordRole}）` : ''}</p>
-    <small>例: 60,64,67 → Cメジャー（I）</small>
-  </div>
-
-  <div class="card">
     <h2>ピアノ鍵盤（クリックで入力）</h2>
-    <Piano activeNotes={pianoNotes} onNoteChange={handlePianoChange} useFlat={isFlatKey(selectedKey, isMinor)} />
-    <p>現在押下ノート: {pianoNotes.join(', ')}</p>
-    <p>判定結果: {pianoChord} {pianoRole ? `（${pianoRole}）` : ''}</p>
-    <small>例: C,E,G → Cメジャー（I）</small>
+    <Piano activeNotes={notes} onNoteChange={handlePianoChange} useFlat={isFlatKey(selectedKey, isMinor)} />
   </div>
 
   <div class="card">
@@ -250,14 +161,9 @@
             {/each}
           </select>
         </label>
-        <button on:click={startListening} disabled={!midiInputs.length || listening}>開始</button>
-        <button on:click={stopListening} disabled={!listening}>停止</button>
-        <label style="margin-left: 8px;">
-          <input type="checkbox" bind:checked={syncPianoMidi} /> ピアノと同期
-        </label>
+        <button onclick={startListening} disabled={!midiInputs.length || listening}>開始</button>
+        <button onclick={stopListening} disabled={!listening}>停止</button>
       </div>
-      <p>現在押下ノート(MIDI): {midiNotes.join(', ')}</p>
-      <p>判定結果: {midiChord} {midiRole ? `（${midiRole}）` : ''}</p>
       <small>注: localhost/HTTPS上の対応ブラウザでご利用ください。</small>
     {:else}
       <p>このブラウザはWeb MIDI APIに対応していません。</p>
@@ -267,14 +173,23 @@
   <p>
     Check out <a href="https://github.com/sveltejs/kit#readme" target="_blank" rel="noreferrer">SvelteKit</a>, the official Svelte app framework powered by Vite!
   </p>
-
-  <p class="read-the-docs">
-    Click on the Vite and Svelte logos to learn more
-  </p>
 </main>
 
 <style>
-  .read-the-docs {
-    color: #888;
+  .result-highlight {
+    margin: 20px auto 12px auto;
+    padding: 18px 28px;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #f8fafc;
+    background: linear-gradient(90deg, #22304a 0%, #3a5068 100%);
+    border-radius: 12px;
+    box-shadow: 0 2px 8px 0 rgba(34,48,74,0.10);
+    text-align: center;
+    letter-spacing: 0.03em;
+    min-width: 180px;
+    max-width: 90vw;
+    transition: background 0.3s;
+    user-select: text;
   }
 </style>
